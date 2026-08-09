@@ -1,10 +1,83 @@
 // 内容脚本：运行在豆包页面同源环境，可携带已登录 Cookie 直连后端 API。
 // 职责：枚举全部对话 → 逐条分页拉取历史 → 格式化为 Markdown → 交由 background 下载。
 
-const API_URL = "https://www.doubao.com/im/chain/single";
-const PAGE_LIMIT = 50;
 // 分页游标从最新往旧走，用 MAX_SAFE_INTEGER 作为第一页锚点
 const START_ANCHOR = Number.MAX_SAFE_INTEGER;
+
+// 捕获到的页面自身 /im/chain/single 请求(URL + headers + body 模板)。
+// 复用它能保证与该豆包版本完全一致,避免手工拼接会话参数。
+let capturedRequest = null;
+
+// 主世界 fetch 钩子通过 postMessage 回传捕获的请求
+window.addEventListener("message", (e) => {
+  if (e.data && e.data.source === "doubao-hook" && e.data.type === "captured" && e.data.req) {
+    capturedRequest = e.data.req;
+    log("已捕获页面请求:", e.data.req.url);
+  }
+});
+
+// 向主世界钩子索取最近一次的请求(测试或页面尚未触发时使用)
+function requestCapture() {
+  window.postMessage({ source: "doubao-hook", type: "request" }, "*");
+}
+
+// 测试钩子：允许从外部注入捕获的请求
+function __setCapturedRequest(req) {
+  capturedRequest = req;
+}
+
+// 直接读取页面已发起的 /im/chain/single 请求 URL(含全部会话 query 参数)。
+// 这是最可靠的方式——不依赖 fetch 钩子或 CSP,直接从 performance 资源条目拿。
+function findSingleRequestUrl() {
+  try {
+    const entries = performance.getEntriesByType("resource");
+    for (const e of entries) {
+      if (e.name && e.name.includes("/im/chain/single")) return e.name;
+    }
+  } catch (_) {
+    /* 忽略 */
+  }
+  return null;
+}
+
+// 生成 body 模板(依据抓包确认的线上格式:c/md 3100、direction 1、ext/filter 字段)
+function buildBody(conversationId, anchorIndex) {
+  return {
+    cmd: 3100,
+    uplink_body: {
+      pull_singe_chain_uplink_body: {
+        conversation_id: String(conversationId),
+        anchor_index: anchorIndex,
+        conversation_type: 3,
+        direction: 1,
+        limit: 20,
+        ext: {},
+        filter: { index_list: [] },
+        evaluate_ab_params: "",
+        evaluate_common_params: "",
+      },
+    },
+    sequence_id: genUuid(),
+    channel: 2,
+    version: "1",
+  };
+}
+
+function genUuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+// 诊断日志：便于在页面控制台观察导出过程
+function log(...args) {
+  console.log("[豆包导出]", ...args);
+}
 
 // 侧边栏选择器（当前线上版本的稳定锚点，Tailwind 工具类不稳定）
 const SIDEBAR_SELECTORS = [
@@ -65,26 +138,27 @@ async function findSidebar() {
 // 2. 分页拉取单条对话
 // ---------------------------------------------------------------------------
 async function fetchPage(conversationId, anchorIndex) {
-  const body = {
-    cmd: 3001,
-    uplink_body: {
-      pull_singe_chain_uplink_body: {
-        conversation_id: conversationId,
-        anchor_index: anchorIndex,
-        conversation_type: 3,
-        direction: 3,
-        limit: PAGE_LIMIT,
-      },
-    },
-    sequence_id: 1,
-    channel: 2,
-    version: "1",
-  };
+  // 优先从 performance 条目拿真实 URL;找不到再回退到 fetch 钩子捕获的请求
+  let url = findSingleRequestUrl();
+  if (!url && capturedRequest) url = capturedRequest.url;
+  if (!url) {
+    requestCapture();
+    await sleep(300);
+    if (capturedRequest) url = capturedRequest.url;
+  }
+  if (!url) {
+    throw new Error(
+      "无法定位 /im/chain/single 请求。请确认已打开一个豆包对话(/chat/:id)页面,并滚动加载几条历史后重试。"
+    );
+  }
 
-  const res = await fetch(API_URL, {
+  // 用已知正确的 body 格式,仅覆盖 conversation_id 与 anchor_index 做分页
+  const body = buildBody(conversationId, anchorIndex);
+
+  const res = await fetch(url, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json; encoding=utf-8",
+      "content-type": "application/json; encoding=utf-8",
       "agw-js-conv": "str",
     },
     credentials: "include",
@@ -105,27 +179,22 @@ async function fetchPage(conversationId, anchorIndex) {
 async function exportConversation(conv) {
   const messages = [];
   let anchor = START_ANCHOR;
-  let consecutiveEmpty = 0;
+  let guard = 0;
 
-  for (let i = 0; i < 10000; i++) {
+  while (guard++ < 10000) {
     const page = await fetchPage(conv.id, anchor);
-    if (!page || page.length === 0) {
-      consecutiveEmpty++;
-      // 连续两次空页视为到底
-      if (consecutiveEmpty >= 2) break;
-      anchor = anchor - PAGE_LIMIT;
-      continue;
-    }
-    consecutiveEmpty = 0;
+    if (!page || page.length === 0) break; // 空页视为到底
+
     messages.push(...page);
 
-    // 计算本页最旧消息的 index，作为下一页锚点
     const indexes = page.map((m) => Number(m.index_in_conv)).filter(Number.isFinite);
     if (indexes.length === 0) break;
-    const oldest = Math.min(...indexes);
-    anchor = oldest - 1;
 
-    if (page.length < PAGE_LIMIT) break;
+    const oldest = Math.min(...indexes);
+    const nextAnchor = oldest - 1;
+    if (nextAnchor >= anchor) break; // 无进展,防死循环
+    anchor = nextAnchor;
+
     await sleep(50); // 轻量限速，避免触发风控
   }
 
@@ -189,7 +258,13 @@ function formatMarkdown({ conv, messages }) {
 // 4. 编排：进度回传 + 触发下载
 // ---------------------------------------------------------------------------
 async function exportAll() {
+  log("开始导出. 捕获到的请求:", capturedRequest ? "有" : "无");
+  if (capturedRequest) {
+    log("捕获 URL:", capturedRequest.url);
+  }
+
   const convs = await getConversations();
+  log("枚举到对话数:", convs.length);
   postProgress({ type: "started", total: convs.length });
 
   let success = 0;
@@ -204,13 +279,17 @@ async function exportAll() {
       const filename = `${conv.title || conv.id}`;
       await requestDownload(filename, markdown);
       success++;
+      log(`[${i + 1}/${convs.length}] ${conv.title || conv.id}: ${result.messages.length} 条 ✓`);
     } catch (err) {
       failed++;
       errors.push(`${conv.title || conv.id}: ${err.message}`);
+      log(`[${i + 1}/${convs.length}] ${conv.title || conv.id}: 失败 - ${err.message}`);
     }
     postProgress({ type: "progress", done: i + 1, total: convs.length });
   }
 
+  log(`导出完成: 成功 ${success}, 失败 ${failed}`);
+  if (errors.length) log("失败明细:", errors);
   postProgress({ type: "done", success, failed, errors });
 }
 
@@ -218,11 +297,17 @@ async function exportAll() {
 // 消息通道
 // ---------------------------------------------------------------------------
 function requestDownload(filename, content) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ type: "download", filename, content }, (resp) => {
-      // 忽略响应，避免 content script 生命周期问题
-      void resp;
-      resolve();
+      if (chrome.runtime.lastError) {
+        reject(new Error(`下载通道错误: ${chrome.runtime.lastError.message}`));
+        return;
+      }
+      if (resp && resp.ok) {
+        resolve();
+      } else {
+        reject(new Error((resp && resp.error) || "下载后台未响应"));
+      }
     });
   });
 }

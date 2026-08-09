@@ -3,7 +3,7 @@
   "name": "豆包对话导出器",
   "version": "1.0.0",
   "description": "批量导出豆包(AI 助手)的所有历史对话为 Markdown 文件",
-  "permissions": ["activeTab", "downloads"],
+  "permissions": ["activeTab", "downloads", "scripting"],
   "host_permissions": ["https://www.doubao.com/*"],
   "background": {
     "service_worker": "background.js"

@@ -1,6 +1,31 @@
 // 后台 Service Worker：负责把内容脚本产出的 Markdown 写入下载。
-// 内容脚本由于运行在豆包页面同一源，能附带登录 Cookie 直连后端 API，
-// 因此 API 调用放在 content.js；这里只做文件下载。
+// API 调用放在 content.js；这里只做文件下载，并注册主世界 fetch 钩子。
+
+const HOOK_ID = "doubao-hook";
+
+async function registerMainWorldHook() {
+  try {
+    const existing = await chrome.scripting.getRegisteredContentScripts({
+      ids: [HOOK_ID],
+    });
+    if (existing.length === 0) {
+      await chrome.scripting.registerContentScripts([
+        {
+          id: HOOK_ID,
+          matches: ["https://www.doubao.com/*"],
+          js: ["hook.js"],
+          runAt: "document_start",
+          world: "MAIN", // 主世界，规避 CSP 对内联 script 的拦截
+        },
+      ]);
+    }
+  } catch (err) {
+    console.warn("[doubao-export] 注册主世界钩子失败:", err.message);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(registerMainWorldHook);
+chrome.runtime.onStartup.addListener(registerMainWorldHook);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "download") {
@@ -13,18 +38,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleDownload({ filename, content }) {
   const safeName = sanitizeFilename(filename);
-  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  try {
-    await chrome.downloads.download({
-      url,
-      filename: safeName,
-      saveAs: false,
-      conflictAction: "uniquify",
-    });
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-  }
+  // 用 data URL 而非 blob URL:Service Worker 中 blob URL 生命周期不稳定,
+  // 常导致 chrome.downloads 静默失败且不产生下载记录。
+  const url = "data:text/markdown;charset=utf-8," + encodeURIComponent(content);
+  await chrome.downloads.download({
+    url,
+    filename: safeName,
+    saveAs: false,
+    conflictAction: "uniquify",
+  });
 }
 
 // 去掉文件名中的非法字符，避免下载失败

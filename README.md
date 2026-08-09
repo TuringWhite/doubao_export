@@ -27,7 +27,8 @@
 ## 工作原理
 
 - 内容脚本运行在豆包页面同源环境，枚举侧边栏 `#flow_chat_sidebar` 中的全部对话链接
-- 对每条对话，调用后端 API `POST https://www.doubao.com/im/chain/single` 分页拉取历史
+- 通过 `hook.js` 在页面主世界注入 fetch 钩子，**捕获页面自身发起的 `/im/chain/single` 请求**（含 aid/device_id/web_id 等会话参数），复用其 URL / headers / body 模板
+- 对每条对话，仅覆盖 `conversation_id` 与 `anchor_index` 分页拉取历史——因复用页面真实请求，**与线上版本保持一致，不依赖硬编码参数**
 - 解析消息（兼容新旧两种 content 结构），提取时间戳与角色（用户 / AI）
 - 格式化输出 Markdown，交由后台 Service Worker 通过 `chrome.downloads` 下载
 
@@ -36,6 +37,7 @@
 ```
 doubao_export/
 ├── manifest.json   # MV3 清单
+├── hook.js         # 主世界 fetch 钩子，捕获页面真实请求
 ├── background.js   # 后台，处理文件下载
 ├── content.js      # 抓取逻辑（枚举 + 分页 + 格式化）
 ├── popup.html      # 弹窗 UI
