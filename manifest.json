@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "豆包对话导出器",
+  "version": "1.0.0",
+  "description": "批量导出豆包(AI 助手)的所有历史对话为 Markdown 文件",
+  "permissions": ["activeTab", "downloads"],
+  "host_permissions": ["https://www.doubao.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "豆包对话导出器"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.doubao.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

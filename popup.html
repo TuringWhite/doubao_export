@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>豆包对话导出器</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>豆包对话导出器</h1>
+      <p class="subtitle">批量导出全部历史对话为 Markdown</p>
+    </header>
+
+    <main>
+      <div id="status" class="status">请先打开豆包对话页面</div>
+
+      <button id="exportBtn" class="btn" disabled>开始导出全部对话</button>
+
+      <div id="progress" class="progress hidden">
+        <div class="progress-bar">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <p id="progressText" class="progress-text"></p>
+      </div>
+
+      <div id="result" class="result hidden"></div>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
