@@ -95,25 +95,23 @@ async function getConversations() {
     throw new Error("未找到对话侧边栏。请先打开 https://www.doubao.com/chat 页面再导出。");
   }
 
-  // 侧边栏可能是虚拟滚动，反复滚到底触发懒加载，收集全部唯一会话
+  // 侧边栏可能是虚拟滚动，反复滚到底触发懒加载，收集全部唯一会话。
+  // 只在"连续 3 轮没有新增"时才收手——之前固定 400ms 判断一次，
+  // 侧边栏稍慢一点就只枚举到当前可见的几条(实测只拿到 5 条而不是全部)。
   const seen = new Map(); // id -> title
-  let lastCount = -1;
-  for (let i = 0; i < 100; i++) {
-    const links = sidebar.querySelectorAll('a[href*="/chat/"]');
-    links.forEach((a) => {
-      const m = (a.getAttribute("href") || "").match(/\/chat\/(\d+)/);
-      if (!m) return;
-      const id = m[1];
-      const title = normalizeTitle(a.textContent, id);
-      if (!seen.has(id)) seen.set(id, title);
-    });
+  let stableRounds = 0;
+  for (let round = 0; round < 80 && stableRounds < 3; round++) {
+    collectConversationLinks(sidebar, seen);
+    const before = seen.size;
 
-    // 滚到底后若没有新增会话，说明已获取全部
-    const before = sidebar.scrollHeight;
-    sidebar.scrollTop = sidebar.scrollHeight;
-    await sleep(400); // 等待懒加载完成
-    if (seen.size === lastCount) break;
-    lastCount = seen.size;
+    scrollAll(sidebar);
+    await sleep(600); // 等待懒加载
+
+    collectConversationLinks(sidebar, seen);
+    if (seen.size === before) stableRounds++;
+    else stableRounds = 0;
+
+    log(`枚举第 ${round + 1} 轮: 累计 ${seen.size} 条`);
   }
 
   const convs = Array.from(seen, ([id, title]) => ({ id, title }));
@@ -121,6 +119,46 @@ async function getConversations() {
     throw new Error("侧边栏没有找到任何对话链接，请确认已登录且页面加载完成。");
   }
   return convs;
+}
+
+// 从侧边栏当前 DOM 里捞出对话链接(虚拟列表会反复挂载/卸载,所以每轮都要重捞)
+function collectConversationLinks(root, seen) {
+  const links = root.querySelectorAll('a[href*="/chat/"]');
+  links.forEach((a) => {
+    const m = (a.getAttribute("href") || "").match(/\/chat\/(\d+)/);
+    if (!m) return;
+    const id = m[1];
+    if (!seen.has(id)) seen.set(id, normalizeTitle(a.textContent, id));
+  });
+  return seen.size;
+}
+
+// 把侧边栏里所有可滚动容器都滚到底。
+// 真正的滚动容器往往是 #flow_chat_sidebar 的深层子节点,只滚外层不会触发懒加载。
+function scrollAll(root) {
+  let scrolled = 0;
+  const nodes = [root];
+  try {
+    nodes.push(...Array.from(root.querySelectorAll("div, ul, ol, section")).slice(0, 600));
+  } catch (_) {
+    /* 忽略 */
+  }
+
+  for (const el of nodes) {
+    if (!el || el.scrollHeight <= el.clientHeight + 40) continue;
+    let overflowY = "";
+    try {
+      overflowY = typeof getComputedStyle === "function"
+        ? getComputedStyle(el).overflowY
+        : "";
+    } catch (_) {
+      overflowY = "";
+    }
+    if (el !== root && !["auto", "scroll", "overlay"].includes(overflowY)) continue;
+    el.scrollTop = el.scrollHeight;
+    scrolled++;
+  }
+  return scrolled;
 }
 
 async function findSidebar() {
@@ -407,22 +445,30 @@ const ROLE_UNKNOWN = "?";
 // 角色判定。
 // 实测:这条接口返回的消息里没有稳定的 user_type(409 个导出里用户消息全部被误判成 AI),
 // 豆包实际用的是 sender_type:1 = 用户,2 = 助手。按优先级多字段兜底,判不出来就返回 "?"。
+// 注意顺序:用户侧标记必须排在 bot_reply / reply_id 之前,否则回复链字段会把用户消息也吞成 AI。
 function inferRole(msg) {
   const senderType = Number(msg?.sender_type);
-  if (senderType === 1) return ROLE_USER;
-  if (senderType === 2) return ROLE_AI;
+  const userType = Number(msg?.user_type);
 
+  // 1. 角色枚举(线上两种字段语义一致:1 = 用户,2/3 = 助手)
+  if (senderType === 1 || userType === 1) return ROLE_USER;
+  if (senderType === 2 || senderType === 3 || userType === 2 || userType === 3) {
+    return ROLE_AI;
+  }
+
+  // 2. 用户侧标记
   if (msg?.is_user === true) return ROLE_USER;
-  if (msg?.from_user_id && !msg?.bot_reply_message_id) return ROLE_USER;
+  if (msg?.sender?.user_id || msg?.from_user_id) return ROLE_USER;
 
+  // 3. 字符串角色
   const role = typeof msg?.role === "string" ? msg.role.toLowerCase() : "";
   if (role === "user") return ROLE_USER;
   if (role === "assistant" || role === "bot" || role === "ai") return ROLE_AI;
 
-  if (msg?.bot_reply_message_id || msg?.reply_id) return ROLE_AI;
+  // 4. 助手侧标记:只有 bot_reply 可信,reply_id 用户消息也会带(用它会把整篇判成 AI)
+  if (msg?.bot_reply_message_id) return ROLE_AI;
 
-  // 旧结构里 user_type 语义是 0 = 用户
-  const userType = Number(msg?.user_type);
+  // 5. 旧结构:user_type 0 = 用户
   if (Number.isFinite(userType) && userType === 0) return ROLE_USER;
 
   return ROLE_UNKNOWN;
@@ -438,6 +484,53 @@ function countRoles(messages) {
     else stat.unknown++;
   }
   return stat;
+}
+
+// 诊断:把一条消息里跟角色相关的字段挑出来打印,方便接口改版时快速定位
+function sampleRoleFields(msg, limit = 80) {
+  const keys = [
+    "message_id",
+    "index_in_conv",
+    "create_time",
+    "sender_type",
+    "user_type",
+    "role",
+    "message_type",
+    "from_user_id",
+    "bot_reply_message_id",
+    "reply_id",
+    "brief",
+  ];
+  const pick = {};
+  for (const key of keys) {
+    if (msg?.[key] !== undefined) pick[key] = msg[key];
+  }
+  pick.text = extractText(msg).replace(/\s+/g, " ").slice(0, limit);
+  pick.allKeys = Object.keys(msg || {}).slice(0, 24).join(",");
+  return pick;
+}
+
+// 诊断:统计若干候选字段的取值分布,一眼能看出哪个字段在区分用户/助手
+function summarizeRoleFields(messages) {
+  const fields = ["sender_type", "user_type", "role", "message_type"];
+  const flags = ["from_user_id", "bot_reply_message_id", "reply_id", "brief"];
+  const stats = {};
+  for (const field of fields) stats[field] = {};
+  const present = {};
+  for (const flag of flags) present[flag] = 0;
+
+  for (const msg of messages) {
+    for (const field of fields) {
+      const value = msg?.[field];
+      const key = value === undefined ? "undefined" : String(value);
+      stats[field][key] = (stats[field][key] || 0) + 1;
+    }
+    for (const flag of flags) {
+      const value = msg?.[flag];
+      if (value !== undefined && value !== null && value !== "") present[flag]++;
+    }
+  }
+  return { 样本数: messages.length, 字段分布: stats, 字段出现次数: present };
 }
 
 // 标题清洗:侧边栏是虚拟列表,textContent 常把同一条标题重复拼 2~3 遍;
@@ -505,6 +598,7 @@ async function exportAll() {
   let success = 0;
   let failed = 0;
   let totalUser = 0;
+  const roleSamples = [];
   const errors = [];
 
   for (let i = 0; i < convs.length; i++) {
@@ -517,6 +611,13 @@ async function exportAll() {
       success++;
       const roleStat = countRoles(result.messages);
       totalUser += roleStat.user;
+      for (const msg of result.messages) {
+        if (roleSamples.length < 300) roleSamples.push(msg);
+      }
+      if (i === 0) {
+        log("字段样本#1:", sampleRoleFields(result.messages[0]));
+        if (result.messages[1]) log("字段样本#2:", sampleRoleFields(result.messages[1]));
+      }
       log(
         `[${i + 1}/${convs.length}] ${filename}: ${result.messages.length} 条 ` +
           `(用户 ${roleStat.user} / AI ${roleStat.ai} / 未识别 ${roleStat.unknown}) ✓`
@@ -530,6 +631,9 @@ async function exportAll() {
   }
 
   log(`导出完成: 成功 ${success}, 失败 ${failed}`);
+  if (roleSamples.length) {
+    log("角色字段分布:", JSON.stringify(summarizeRoleFields(roleSamples)));
+  }
   if (errors.length) log("失败明细:", errors);
   if (success > 0 && totalUser === 0) {
     console.warn(

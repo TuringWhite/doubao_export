@@ -45,6 +45,7 @@ const {
   inferRole,
   normalizeTitle,
   countRoles,
+  summarizeRoleFields,
 } = sandbox;
 
 // ===========================================================================
@@ -325,6 +326,24 @@ function testInferRole() {
   assert.strictEqual(inferRole({ user_type: 0 }), "用户", "user_type=0 应为用户");
   assert.strictEqual(inferRole({ bot_reply_message_id: "x" }), "AI", "有 bot_reply 应为 AI");
   assert.strictEqual(inferRole({}), "?", "无从判断时应返回未知,而不是默认 AI");
+
+  // 真实事故回归:用户消息带 reply_id(引用回复),旧逻辑会把它判成 AI
+  assert.strictEqual(
+    inferRole({ user_type: 1, reply_id: "r1" }),
+    "用户",
+    "user_type=1 的用户消息不能被 reply_id 抢判成 AI"
+  );
+  assert.strictEqual(
+    inferRole({ sender_type: 1, bot_reply_message_id: "b1" }),
+    "用户",
+    "sender_type=1 优先于 bot_reply_message_id"
+  );
+  assert.strictEqual(inferRole({ sender_type: 3 }), "AI", "sender_type=3 应为 AI");
+  assert.strictEqual(inferRole({ reply_id: "r1" }), "?", "只有 reply_id 不足以判定角色");
+
+  const dist = summarizeRoleFields([{ sender_type: 1 }, { sender_type: 2 }, { sender_type: 2 }]);
+  assert.deepStrictEqual({ ...dist["字段分布"].sender_type }, { "1": 1, "2": 2 }, "字段分布应正确");
+  assert.strictEqual(dist["样本数"], 3, "样本数应正确");
 
   // 真实场景回归:线上消息只带 sender_type,旧逻辑会把用户也标成 AI
   const md = formatMarkdown({
