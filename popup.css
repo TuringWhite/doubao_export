@@ -119,3 +119,57 @@ h1 {
 .hidden {
   display: none;
 }
+
+.guide {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.guide summary {
+  cursor: pointer;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.guide summary::marker {
+  color: var(--accent);
+}
+
+.steps,
+.notes {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.steps li,
+.notes li {
+  margin: 2px 0;
+}
+
+.notes {
+  margin-top: 6px;
+  padding-left: 16px;
+  list-style: "· ";
+}
+
+.steps code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #f1f3f5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #374151;
+}
+
+.meta {
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: #9ca3af;
+  text-align: center;
+}

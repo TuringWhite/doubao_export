@@ -4,8 +4,18 @@ const progressEl = document.getElementById("progress");
 const progressFill = document.getElementById("progressFill");
 const progressText = document.getElementById("progressText");
 const resultEl = document.getElementById("result");
+const versionEl = document.getElementById("version");
 
 let activeTabId = null;
+
+// 版本号跟随 manifest，改版本不用同步改 HTML
+if (versionEl) {
+  try {
+    versionEl.textContent = chrome.runtime.getManifest().version;
+  } catch (_) {
+    /* 非扩展环境(直接打开 popup.html 预览)时忽略 */
+  }
+}
 
 // 监听 content script 的进度事件
 chrome.runtime.onMessage.addListener((message) => {

@@ -25,6 +25,26 @@
       </div>
 
       <div id="result" class="result hidden"></div>
+
+      <details class="guide" open>
+        <summary>使用说明</summary>
+        <ol class="steps">
+          <li>在已登录状态下打开 <code>doubao.com/chat</code></li>
+          <li>点击上方「开始导出全部对话」</li>
+          <li>导出期间保持页面打开，弹窗关了也不影响</li>
+          <li>完成后到 <code>下载/doubao_export/</code> 取 <code>.md</code> 文件</li>
+        </ol>
+        <ul class="notes">
+          <li>每条对话生成一个文件，含用户 / AI 角色与消息时间戳</li>
+          <li>侧边栏对话列表需先加载完，枚举慢时会多等几轮</li>
+          <li>对话较多时耗时较长，进度见上方进度条</li>
+          <li>全部在本机处理，不上传任何服务器</li>
+        </ul>
+      </details>
+
+      <p class="meta">
+        仅导出你自己账号的对话 · v<span id="version">1.1.1</span>
+      </p>
     </main>
 
     <script src="popup.js"></script>
