@@ -3,7 +3,7 @@
 一个 Chrome 浏览器插件（Manifest V3），用于**批量导出豆包（AI 助手）的所有历史对话**为 Markdown 文件。
 
 > 详细使用说明：[docs/使用说明.md](docs/使用说明.md)（含实拍截图、日志逐行解读、角色判定踩坑记录）
-> 隐私政策：[PRIVACY.md](PRIVACY.md)
+> 隐私政策：[PRIVACY.md](PRIVACY.md) · 在线版 https://turingwhite.github.io/doubao_export/privacy.html
 
 ## 功能
 

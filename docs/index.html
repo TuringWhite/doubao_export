@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>豆包对话导出器 · 把豆包历史对话批量导出为 Markdown</title>
+<style>
+  :root { --fg:#0f172a; --muted:#64748b; --border:#e2e8f0; --accent:#165dff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#0b1020; color:#e6edf7;
+         font:16px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:840px; margin:0 auto; padding:72px 24px 96px; }
+  h1 { font-size:40px; margin:0 0 14px; letter-spacing:-.8px; }
+  .sub { font-size:18px; color:#93a4bf; margin:0 0 32px; }
+  .btns { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:48px; }
+  a.btn { display:inline-block; padding:11px 20px; border-radius:9px; text-decoration:none;
+          font-size:15px; font-weight:600; }
+  .primary { background:var(--accent); color:#fff; }
+  .ghost { border:1px solid #2c3a55; color:#c7d3e6; }
+  .card { background:#111a2e; border:1px solid #1e2b45; border-radius:14px; padding:24px 26px; margin:18px 0; }
+  .card h2 { font-size:18px; margin:0 0 10px; }
+  .card p, .card li { color:#9fb0c9; font-size:15px; }
+  ul { margin:8px 0 0; padding-left:20px; }
+  code, pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#0a1122; border:1px solid #1b2740; border-radius:10px;
+        padding:14px 16px; overflow:auto; font-size:14px; color:#c9d6ea; }
+  footer { margin-top:56px; color:#5f7292; font-size:13px; }
+  a { color:#7ba7ff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>豆包对话导出器</h1>
+  <p class="sub">把豆包网页版的历史对话批量导出为 Markdown —— 本地处理，不上传。</p>
+
+  <div class="btns">
+    <a class="btn primary" href="https://github.com/TuringWhite/doubao_export">GitHub 仓库</a>
+    <a class="btn ghost" href="https://github.com/TuringWhite/doubao_export/releases/latest">下载最新版</a>
+    <a class="btn ghost" href="./privacy.html">隐私政策</a>
+  </div>
+
+  <div class="card">
+    <h2>它做什么</h2>
+    <ul>
+      <li>一键枚举侧边栏全部历史对话，逐条导出，单条失败不影响整体</li>
+      <li>每条对话一个 <code>.md</code> 文件，保留用户 / AI 角色与消息时间戳</li>
+      <li>走页面同源接口分页，不靠滚动屏幕，长对话也能拉全</li>
+      <li>全程在本机完成，文件直接写进下载目录</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>安装（开发者模式）</h2>
+    <p>下载 Release 里的 zip 解压，或克隆仓库：</p>
+    <pre>git clone https://github.com/TuringWhite/doubao_export.git</pre>
+    <p>打开 <code>chrome://extensions/</code> → 开启「开发者模式」→「加载已解压的扩展程序」→ 选择该目录。需要 Chrome 111+。</p>
+  </div>
+
+  <div class="card">
+    <h2>使用</h2>
+    <p>登录 <code>doubao.com/chat</code>，点工具栏图标 →「开始导出全部对话」。完成后文件在 <code>下载/doubao_export/</code>。</p>
+  </div>
+
+  <footer>
+    本扩展为第三方工具，与豆包、字节跳动无关联，未获其授权或背书。
+  </footer>
+</div>
+</body>
+</html>

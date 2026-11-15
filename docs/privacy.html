@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>隐私政策 · 豆包对话导出器</title>
+<style>
+  :root { --fg:#1f2328; --muted:#6b7280; --border:#e5e7eb; --accent:#165dff; --bg:#fff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#f7f8fa; color:var(--fg);
+         font:16px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+  main { max-width:760px; margin:40px auto 80px; padding:44px 48px; background:var(--bg);
+         border:1px solid var(--border); border-radius:14px; }
+  h1 { font-size:28px; margin:0 0 6px; letter-spacing:-.3px; }
+  .meta { color:var(--muted); font-size:14px; margin:0 0 32px; }
+  h2 { font-size:19px; margin:36px 0 12px; padding-top:8px; }
+  p { margin:12px 0; }
+  ul { padding-left:22px; }
+  li { margin:6px 0; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; font-size:15px; }
+  th,td { text-align:left; padding:10px 12px; border:1px solid var(--border); vertical-align:top; }
+  th { background:#f3f4f6; font-weight:600; white-space:nowrap; }
+  code { background:#f1f3f5; padding:2px 6px; border-radius:4px; font-size:14px;
+         font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .lead { background:#f0f7ff; border-left:4px solid var(--accent); padding:14px 18px;
+          border-radius:0 8px 8px 0; margin:20px 0 8px; }
+  footer { color:var(--muted); font-size:14px; margin-top:44px; padding-top:20px; border-top:1px solid var(--border); }
+  a { color:var(--accent); }
+  @media (max-width:640px){ main { margin:0; border:0; border-radius:0; padding:28px 20px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>隐私政策 · 豆包对话导出器</h1>
+  <p class="meta">最后更新：2026-11-15 · 适用版本 1.1.2</p>
+
+  <div class="lead">
+    本扩展只在你主动点击「开始导出」后，读取你当前登录的豆包账号中的对话内容，并在你的电脑上生成 Markdown 文件。
+    <strong>不收集账号密码，不采集浏览记录，不向开发者或任何第三方服务器发送任何数据。</strong>
+  </div>
+
+  <h2>本扩展会接触的数据</h2>
+  <table>
+    <thead><tr><th>数据</th><th>何时接触</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>你账号下的对话列表与对话内容（消息文本、角色、时间戳）</td>
+        <td>仅在你点击「开始导出全部对话」之后</td>
+        <td>生成 Markdown 文件，保存到你本机的下载目录</td>
+      </tr>
+      <tr>
+        <td>当前豆包页面的 URL 与页面自身已发起的接口请求参数</td>
+        <td>仅在导出过程中</td>
+        <td>复用页面同源请求参数，避免手工拼接会话标识</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>本扩展<strong>不会</strong>接触：账号密码、手机号、支付信息、浏览历史、其他网站页面内容、剪贴板、键盘输入。</p>
+
+  <h2>数据如何流转</h2>
+  <ul>
+    <li>导出所需的接口请求只发往 <code>https://www.doubao.com</code>，与豆包网页自身使用的接口一致，使用你浏览器中已有的登录状态。</li>
+    <li>生成的文件通过浏览器下载能力直接写入你本机的下载目录（默认 <code>下载/doubao_export/</code>）。</li>
+    <li>开发者服务器<strong>不参与</strong>上述任何环节。本扩展没有自建后端，不含统计、埋点或崩溃上报 SDK。</li>
+  </ul>
+
+  <h2>数据存储与保留</h2>
+  <p>本扩展不存储你的任何数据。它不申请 <code>storage</code> 权限，不写 <code>localStorage</code> / <code>IndexedDB</code>，关闭弹窗即结束。导出的文件只存在于你本机，保留多久由你决定。</p>
+
+  <h2>数据共享与出售</h2>
+  <p>不共享、不转让、不出售。不存在「业务转让时迁移数据」的情形，因为本扩展从未持有你的数据。</p>
+
+  <h2>权限说明</h2>
+  <ul>
+    <li><code>activeTab</code> / <code>scripting</code>：在你点击导出时，向当前豆包标签页注入导出脚本，并注册读取接口参数的主世界脚本。</li>
+    <li><code>downloads</code>：把生成的 Markdown 保存为文件。</li>
+    <li>站点权限 <code>https://www.doubao.com/*</code>：读取你自己可见的对话内容，并调用页面同源接口分页获取历史消息。</li>
+  </ul>
+
+  <h2>你的控制权</h2>
+  <ul>
+    <li>随时在 <code>chrome://extensions/</code> 停用或卸载本扩展，即可完全停止其运行。</li>
+    <li>已导出的文件由你自行管理，本扩展不会回读或上传。</li>
+    <li>卸载后站点权限即被移除。</li>
+  </ul>
+
+  <h2>儿童</h2>
+  <p>本扩展不面向 13 岁以下儿童，也不会有意收集其信息。</p>
+
+  <h2>与第三方服务的关系</h2>
+  <p>本扩展不是豆包、字节跳动或其关联公司的官方产品，未获得其授权、合作或背书。「豆包」等名称仅用于说明兼容的网站。请只导出你有权访问和保存的内容，并遵守你与豆包之间的服务条款。</p>
+
+  <h2>变更</h2>
+  <p>本政策如有更新，将修改本页顶部的「最后更新」日期，并在扩展的版本说明中注明。</p>
+
+  <h2>联系方式</h2>
+  <p>如有隐私相关问题，请在本项目仓库提交 Issue：<a href="https://github.com/TuringWhite/doubao_export/issues">github.com/TuringWhite/doubao_export/issues</a></p>
+
+  <footer>
+    本页可自由引用，用于 Chrome 应用商店的隐私政策链接。
+  </footer>
+</main>
+</body>
+</html>
