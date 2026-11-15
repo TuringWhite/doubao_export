@@ -50,4 +50,23 @@ doubao_export/
 - 插件仅在你自己的浏览器会话内运行，导出的是你账号自己的数据，不会上传到任何第三方服务
 - 大量对话导出耗时较长，请保持页面与弹窗打开
 - 若豆包改版导致选择器失效，可调整 `content.js` 顶部的 `SIDEBAR_SELECTORS` 与消息解析逻辑
-- 若遇到风控限流，可在 `content.js` 中适当调大 `PAGE_LIMIT` 下方的 `sleep` 间隔
+- 若遇到风控限流，可在 `content.js` 中适当调大翻页之间的 `sleep` 间隔
+- 需要 Chrome 111+（`hook.js` 以 `world: "MAIN"` 方式动态注册）
+
+## 版本记录
+
+### 1.1.0
+
+- 修复角色判定：线上消息用的是 `sender_type`（1 = 用户，2 = 助手），旧版按 `user_type === 0` 判断，
+  导致 409 个导出文件里用户消息全部被标成 AI。现按 `sender_type → is_user / from_user_id → role → bot_reply → user_type`
+  的顺序多字段兜底，仍判不出来记为「未识别」，并在文件头与控制台给出提示。
+- 修复文件名/标题重复：侧边栏是虚拟列表，`textContent` 会拼出 `标题标题标题`，现做重复段还原、去杂符并截断到 60 字。
+- 补 `icons/`（16/32/48/128）并在 manifest 中声明。
+- 智能体对话（`/chat/bot/chat/:id`）改用 `anchor=0 + direction=3` 首屏探测，普通对话用 `MAX_SAFE_INTEGER + direction=1`，失败自动换候选。
+- 观测不到页面请求时自拼 `/im/chain/single` URL 并补齐默认 query，不再直接报错。
+- 分页改用 `has_more` 判终止，锚点优先取接口返回的 `next_anchor`，并加 `seenAnchors` + 重复页 + 消息 ID 三重去重。
+- 单元测试扩到 9 组，`node test.js` 全绿。
+
+### 1.0.0
+
+- 首个版本：枚举侧边栏会话、按页拉取历史、导出 Markdown。

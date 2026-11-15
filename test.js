@@ -38,7 +38,14 @@ const sandbox = {
 vm.createContext(sandbox);
 vm.runInContext(code, sandbox);
 
-const { extractText, formatMarkdown, exportConversation } = sandbox;
+const {
+  extractText,
+  formatMarkdown,
+  exportConversation,
+  inferRole,
+  normalizeTitle,
+  countRoles,
+} = sandbox;
 
 // ===========================================================================
 // 1. extractText —— 新旧两种 content 结构
@@ -195,12 +202,195 @@ function testMessageChannel() {
 }
 
 // ===========================================================================
+// 5. 智能体对话(/chat/bot/chat/:id):首屏锚点应为 0 / direction 3
+// ===========================================================================
+async function testBotChatAnchor() {
+  sandbox.location = {
+    pathname: "/chat/bot/chat/888",
+    href: "https://www.doubao.com/chat/bot/chat/888",
+    origin: "https://www.doubao.com",
+    search: "",
+  };
+  sandbox.__setCapturedRequest(null); // 模拟页面还没发过该接口
+  sandbox.performance.getEntriesByType = () => [];
+
+  const calls = [];
+  sandbox.fetch = async (url, opts) => {
+    const inner = JSON.parse(opts.body).uplink_body.pull_singe_chain_uplink_body;
+    calls.push({ url, anchor: inner.anchor_index, direction: inner.direction });
+    const msgs =
+      inner.anchor_index === 0
+        ? Array.from({ length: 5 }, (_, i) => ({
+            index_in_conv: i + 1,
+            user_type: i % 2 === 0 ? 0 : 1,
+            content: `b${i}`,
+          }))
+        : [];
+    return {
+      ok: true,
+      json: async () => ({
+        downlink_body: {
+          pull_singe_chain_downlink_body: { messages: msgs, has_more: msgs.length > 0 },
+        },
+      }),
+    };
+  };
+
+  const result = await exportConversation({ id: "888", title: "智能体" });
+
+  assert.strictEqual(result.messages.length, 5, `应拉到 5 条,实得 ${result.messages.length}`);
+  assert.strictEqual(calls[0].anchor, 0, "智能体对话首屏锚点应为 0");
+  assert.strictEqual(calls[0].direction, 3, "智能体对话首屏 direction 应为 3");
+  assert.ok(calls[0].url.includes("/im/chain/single"), "无观测请求时应能自拼接口 URL");
+  assert.ok(calls[0].url.includes("aid=497858"), "自拼 URL 应补齐默认 query");
+
+  console.log("✓ 智能体对话: anchor=0 / direction=3 探测通过");
+}
+
+// ===========================================================================
+// 6. 接口明确 has_more=false 时,不再多请求一页
+// ===========================================================================
+async function testHasMoreStop() {
+  sandbox.location = undefined;
+  sandbox.__setCapturedRequest(null);
+
+  let calls = 0;
+  const fullPage = Array.from({ length: 20 }, (_, i) => ({
+    index_in_conv: 100 - i,
+    user_type: i % 2,
+    content: `h${i}`,
+  }));
+  sandbox.fetch = async () => {
+    calls++;
+    return {
+      ok: true,
+      json: async () => ({
+        downlink_body: {
+          pull_singe_chain_downlink_body: { messages: fullPage, has_more: false },
+        },
+      }),
+    };
+  };
+
+  const result = await exportConversation({ id: "1", title: "has_more" });
+  assert.strictEqual(result.messages.length, 20, "应收集 20 条");
+  assert.strictEqual(calls, 1, `has_more=false 应只请求 1 次,实际 ${calls} 次`);
+
+  console.log("✓ has_more=false: 请求 1 次即停止");
+}
+
+// ===========================================================================
+// 7. 接口重复返回同一页时去重,不死循环
+// ===========================================================================
+async function testDedupeRepeatedPage() {
+  sandbox.location = undefined;
+  sandbox.__setCapturedRequest(null);
+
+  let calls = 0;
+  const page = Array.from({ length: 5 }, (_, i) => ({
+    index_in_conv: 5 - i, // 5..1
+    user_type: i % 2,
+    content: `d${i}`,
+  }));
+  sandbox.fetch = async () => {
+    calls++;
+    return {
+      ok: true,
+      json: async () => ({
+        downlink_body: {
+          pull_singe_chain_downlink_body: { messages: page, has_more: true },
+        },
+      }),
+    };
+  };
+
+  const result = await exportConversation({ id: "2", title: "dedupe" });
+  const ids = result.messages.map((m) => m.index_in_conv);
+  assert.strictEqual(ids.length, 5, `重复页应去重为 5 条,实得 ${ids.length}`);
+  assert.strictEqual(new Set(ids).size, ids.length, "不应出现重复消息");
+  assert.ok(calls <= 3, `应在有限次请求内停止,实际 ${calls} 次`);
+
+  console.log("✓ 重复分页: 去重并终止,无死循环");
+}
+
+// ===========================================================================
+// 8. inferRole —— 角色判定(真实接口只有 sender_type)
+// ===========================================================================
+function testInferRole() {
+  assert.strictEqual(inferRole({ sender_type: 1 }), "用户", "sender_type=1 应为用户");
+  assert.strictEqual(inferRole({ sender_type: 2 }), "AI", "sender_type=2 应为 AI");
+  assert.strictEqual(inferRole({ sender_type: "1" }), "用户", "sender_type 为字符串也应识别");
+  assert.strictEqual(inferRole({ role: "user" }), "用户", "role=user 应为用户");
+  assert.strictEqual(inferRole({ role: "assistant" }), "AI", "role=assistant 应为 AI");
+  assert.strictEqual(inferRole({ user_type: 0 }), "用户", "user_type=0 应为用户");
+  assert.strictEqual(inferRole({ bot_reply_message_id: "x" }), "AI", "有 bot_reply 应为 AI");
+  assert.strictEqual(inferRole({}), "?", "无从判断时应返回未知,而不是默认 AI");
+
+  // 真实场景回归:线上消息只带 sender_type,旧逻辑会把用户也标成 AI
+  const md = formatMarkdown({
+    conv: { id: "9", title: "示例" },
+    messages: [
+      { sender_type: 1, create_time: 1700000000, content: "用户提问示例" },
+      { sender_type: 2, create_time: 1700000060, content: "AI 回复示例" },
+    ],
+  });
+  assert.ok(md.includes("## 用户"), "用户消息应标成用户");
+  assert.strictEqual((md.match(/## 用户/g) || []).length, 1, "应只有一条用户消息");
+  assert.strictEqual((md.match(/## AI/g) || []).length, 1, "应只有一条 AI 消息");
+  assert.ok(!md.includes("角色识别"), "全部识别成功时不应出现降级提示");
+
+  const stat = countRoles([
+    { sender_type: 1 },
+    { sender_type: 2 },
+    { sender_type: 2 },
+  ]);
+  assert.deepStrictEqual({ ...stat }, { user: 1, ai: 2, unknown: 0 }, "角色统计应正确");
+
+  console.log("✓ inferRole: 8 例 + 真实场景回归通过");
+}
+
+// ===========================================================================
+// 9. normalizeTitle —— 侧边栏标题重复拼接
+// ===========================================================================
+function testNormalizeTitle() {
+  assert.strictEqual(
+    normalizeTitle("测试标题测试标题测试标题"),
+    "测试标题",
+    "重复三遍的标题应还原"
+  );
+  assert.strictEqual(
+    normalizeTitle("豆包积分用途豆包积分用途"),
+    "豆包积分用途",
+    "重复两遍的标题应还原"
+  );
+  assert.strictEqual(
+    normalizeTitle("19号线南延时间"),
+    "19号线南延时间",
+    "正常标题不应被改动"
+  );
+  assert.strictEqual(normalizeTitle("  多  空格  "), "多 空格", "应压缩空白");
+  assert.strictEqual(normalizeTitle(""), "对话", "空标题应回退");
+  assert.strictEqual(normalizeTitle("", "38453598137306114"), "38453598137306114", "应回退到 ID");
+  const longTitle = Array.from({ length: 200 }, (_, i) =>
+    String.fromCharCode(0x4e00 + i)
+  ).join("");
+  assert.strictEqual(normalizeTitle(longTitle).length, 60, "超长标题应截断到 60");
+
+  console.log("✓ normalizeTitle: 7 例通过");
+}
+
+// ===========================================================================
 
 async function main() {
   testExtractText();
   testFormatMarkdown();
   await testExportConversation();
   testMessageChannel();
+  await testBotChatAnchor();
+  await testHasMoreStop();
+  await testDedupeRepeatedPage();
+  testInferRole();
+  testNormalizeTitle();
   console.log("\n全部测试通过 ✅");
 }
 

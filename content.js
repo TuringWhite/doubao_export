@@ -41,7 +41,7 @@ function findSingleRequestUrl() {
 }
 
 // 生成 body 模板(依据抓包确认的线上格式:c/md 3100、direction 1、ext/filter 字段)
-function buildBody(conversationId, anchorIndex) {
+function buildBody(conversationId, anchorIndex, direction = 1) {
   return {
     cmd: 3100,
     uplink_body: {
@@ -49,8 +49,8 @@ function buildBody(conversationId, anchorIndex) {
         conversation_id: String(conversationId),
         anchor_index: anchorIndex,
         conversation_type: 3,
-        direction: 1,
-        limit: 20,
+        direction,
+        limit: PAGE_SIZE,
         ext: {},
         filter: { index_list: [] },
         evaluate_ab_params: "",
@@ -104,7 +104,7 @@ async function getConversations() {
       const m = (a.getAttribute("href") || "").match(/\/chat\/(\d+)/);
       if (!m) return;
       const id = m[1];
-      const title = (a.textContent || "").trim();
+      const title = normalizeTitle(a.textContent, id);
       if (!seen.has(id)) seen.set(id, title);
     });
 
@@ -137,23 +137,146 @@ async function findSidebar() {
 // ---------------------------------------------------------------------------
 // 2. 分页拉取单条对话
 // ---------------------------------------------------------------------------
-async function fetchPage(conversationId, anchorIndex) {
-  // 优先从 performance 条目拿真实 URL;找不到再回退到 fetch 钩子捕获的请求
-  let url = findSingleRequestUrl();
-  if (!url && capturedRequest) url = capturedRequest.url;
-  if (!url) {
-    requestCapture();
-    await sleep(300);
-    if (capturedRequest) url = capturedRequest.url;
+
+// 单页请求条数
+const PAGE_SIZE = 20;
+
+// 单条对话最多翻多少页,防死循环
+const PAGE_GUARD = 1000;
+
+// 识别当前页面类型:普通对话从最新锚点往下翻,智能体对话从 0 往上翻
+function detectChatType() {
+  try {
+    const path = (typeof location !== "undefined" && location.pathname) || "";
+    if (/^\/chat\/bot\/chat\/\d+/.test(path)) return "bot-chat";
+    if (/^\/chat\/\d+/.test(path)) return "chat";
+  } catch (_) {
+    /* 测试环境无 location */
   }
-  if (!url) {
-    throw new Error(
-      "无法定位 /im/chain/single 请求。请确认已打开一个豆包对话(/chat/:id)页面,并滚动加载几条历史后重试。"
-    );
+  return "chat";
+}
+
+// 首屏锚点候选。不同页面类型约定的 anchor / direction 不一样,
+// 逐个探测,谁先返回消息就用谁的参数继续翻页。
+function getAnchorCandidates() {
+  const botAnchor = { anchor: 0, direction: 3, source: "bot-anchor-0" };
+  const newest = { anchor: START_ANCHOR, direction: 1, source: "newest" };
+  const zero = { anchor: 0, direction: 3, source: "zero" };
+  return detectChatType() === "bot-chat"
+    ? [botAnchor, newest]
+    : [newest, zero];
+}
+
+// 拼 /im/chain/single 的 URL。
+// 观测到真实 URL 就直接复用(它已带齐会话参数);否则自拼并补齐默认 query,
+// 这样即使页面还没发过该请求,也能直接开始导出。
+function buildSingleChainUrl(observedUrl) {
+  if (observedUrl) return observedUrl;
+
+  const origin =
+    (typeof location !== "undefined" && location.origin) || "https://www.doubao.com";
+  const defaults = {
+    version_code: "20800",
+    language: "zh",
+    device_platform: "web",
+    aid: "497858",
+    real_aid: "497858",
+    pkg_type: "release_version",
+    region: "CN",
+    sys_region: "CN",
+    samantha_web: "1",
+    web_platform: "browser",
+    "use-olympus-account": "1",
+  };
+
+  if (typeof URL !== "function") {
+    const qs = Object.entries(defaults)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return `${origin}/im/chain/single?${qs}`;
   }
 
-  // 用已知正确的 body 格式,仅覆盖 conversation_id 与 anchor_index 做分页
-  const body = buildBody(conversationId, anchorIndex);
+  const url = new URL("/im/chain/single", origin);
+  const current = typeof location !== "undefined" ? new URL(location.href) : null;
+  Object.entries(defaults).forEach(([key, value]) => {
+    url.searchParams.set(
+      key,
+      (current && current.searchParams.get(key)) || value
+    );
+  });
+  return url.toString();
+}
+
+// 兼容几种可能的返回层级(single / singe 两种拼写线上都出现过,偶尔外面还包一层 data)
+function getSingleChainBody(data) {
+  return (
+    data?.downlink_body?.pull_singe_chain_downlink_body ||
+    data?.downlink_body?.pull_single_chain_downlink_body ||
+    data?.downlink_body?.pull_singe_chain_downlink_body?.single_chain ||
+    data?.data?.downlink_body?.pull_singe_chain_downlink_body ||
+    data?.data?.downlink_body?.pull_single_chain_downlink_body ||
+    null
+  );
+}
+
+// 接口若有显式的 next_anchor,优先信它(比自己算的准)
+function getExplicitNextAnchor(body) {
+  const keys = [
+    body?.next_anchor_index,
+    body?.next_anchor,
+    body?.next_index_in_conv,
+    body?.min_anchor_index,
+    body?.min_index_in_conv,
+    body?.last_index_in_conv,
+    body?.cursor?.next_anchor_index,
+    body?.cursor?.anchor_index,
+    body?.page_info?.next_anchor_index,
+    body?.pagination?.next_anchor_index,
+  ];
+  for (const value of keys) {
+    const num = Number(value);
+    if (Number.isFinite(num) && num > 0) return Math.floor(num);
+  }
+  return 0;
+}
+
+// 计算下一页锚点
+function getNextAnchor(body, pageMessages, currentAnchor) {
+  const explicit = getExplicitNextAnchor(body);
+  if (explicit && explicit !== currentAnchor) return explicit;
+
+  const indexes = pageMessages
+    .map((m) => Number(m.index_in_conv))
+    .filter(Number.isFinite);
+  if (indexes.length === 0) return 0;
+
+  const oldest = Math.min(...indexes);
+  return Math.max(1, oldest - 1); // anchor 是闭区间,往前退一格
+}
+
+// 消息唯一标识,用于跨页去重(接口分页之间可能有重叠)
+function messageIdentity(msg) {
+  return String(
+    msg.message_id ||
+      msg.id ||
+      msg.server_message_id ||
+      `${msg.index_in_conv}:${msg.user_type}:${extractText(msg)}`
+  );
+}
+
+async function fetchPage(conversationId, anchorIndex, direction) {
+  // 优先从 performance 条目拿真实 URL;找不到再回退到 fetch 钩子捕获的请求
+  let observed = findSingleRequestUrl();
+  if (!observed && capturedRequest) observed = capturedRequest.url;
+  if (!observed) {
+    requestCapture();
+    await sleep(300);
+    if (capturedRequest) observed = capturedRequest.url;
+  }
+
+  // 观测不到也不报错,直接自拼 URL 兜底
+  const url = buildSingleChainUrl(observed);
+  const body = buildBody(conversationId, anchorIndex, direction);
 
   const res = await fetch(url, {
     method: "POST",
@@ -169,38 +292,81 @@ async function fetchPage(conversationId, anchorIndex) {
     throw new Error(`API 请求失败 HTTP ${res.status}`);
   }
   const data = await res.json();
-  const messages =
-    data?.downlink_body?.pull_singe_chain_downlink_body?.single_chain?.messages ||
-    data?.downlink_body?.pull_singe_chain_downlink_body?.messages ||
-    [];
-  return messages;
+  const chain = getSingleChainBody(data) || {};
+  return {
+    messages: Array.isArray(chain.messages) ? chain.messages : [],
+    hasMore: chain.has_more,
+    body: chain,
+  };
+}
+
+// 用一组锚点参数把一条对话翻到底
+async function pullConversation(conv, start) {
+  const collected = [];
+  const seen = new Set();
+  const seenAnchors = new Set();
+
+  let anchor = start.anchor;
+  let direction = start.direction;
+  let repeated = 0;
+  let lastPageKey = null;
+
+  for (let page = 0; page < PAGE_GUARD; page++) {
+    seenAnchors.add(anchor);
+    const { messages: list, hasMore, body } = await fetchPage(
+      conv.id,
+      anchor,
+      direction
+    );
+    if (!list.length) break; // 空页视为到底
+
+    // 接口重复返回同一页,说明锚点没生效,连续两次就停
+    const pageKey = list.map(messageIdentity).join("|");
+    if (pageKey === lastPageKey) {
+      repeated++;
+      if (repeated >= 2) break;
+    } else {
+      repeated = 0;
+      lastPageKey = pageKey;
+    }
+
+    for (const msg of list) {
+      const key = messageIdentity(msg);
+      if (!seen.has(key)) {
+        seen.add(key);
+        collected.push(msg);
+      }
+    }
+
+    if (hasMore === false) break; // 接口明确说没有更早的了
+    if (!hasMore && list.length < PAGE_SIZE) break; // 没给 has_more 时,短页视为到底
+
+    const next = getNextAnchor(body, list, anchor);
+    if (!next || seenAnchors.has(next)) break;
+    anchor = next;
+    direction = 1; // 除首屏外一律往更早的方向翻
+    await sleep(50); // 轻量限速,避免触发风控
+  }
+
+  // 按 index_in_conv 升序(旧→新),比整体 reverse 更抗接口乱序
+  collected.sort(
+    (a, b) => Number(a.index_in_conv || 0) - Number(b.index_in_conv || 0)
+  );
+  return { messages: collected, start };
 }
 
 async function exportConversation(conv) {
-  const messages = [];
-  let anchor = START_ANCHOR;
-  let guard = 0;
-
-  while (guard++ < 10000) {
-    const page = await fetchPage(conv.id, anchor);
-    if (!page || page.length === 0) break; // 空页视为到底
-
-    messages.push(...page);
-
-    const indexes = page.map((m) => Number(m.index_in_conv)).filter(Number.isFinite);
-    if (indexes.length === 0) break;
-
-    const oldest = Math.min(...indexes);
-    const nextAnchor = oldest - 1;
-    if (nextAnchor >= anchor) break; // 无进展,防死循环
-    anchor = nextAnchor;
-
-    await sleep(50); // 轻量限速，避免触发风控
+  const attempts = [];
+  for (const candidate of getAnchorCandidates()) {
+    try {
+      const result = await pullConversation(conv, candidate);
+      if (result.messages.length) return { conv, ...result };
+      attempts.push(`${candidate.source}: 空页`);
+    } catch (err) {
+      attempts.push(`${candidate.source}: ${err.message}`);
+    }
   }
-
-  // API 返回是 新→旧，反转成 旧→新 便于阅读
-  messages.reverse();
-  return { conv, messages };
+  throw new Error(`没有拉到任何消息(${attempts.join("; ")})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -234,23 +400,92 @@ function extractText(msg) {
   return "";
 }
 
+const ROLE_USER = "用户";
+const ROLE_AI = "AI";
+const ROLE_UNKNOWN = "?";
+
+// 角色判定。
+// 实测:这条接口返回的消息里没有稳定的 user_type(409 个导出里用户消息全部被误判成 AI),
+// 豆包实际用的是 sender_type:1 = 用户,2 = 助手。按优先级多字段兜底,判不出来就返回 "?"。
+function inferRole(msg) {
+  const senderType = Number(msg?.sender_type);
+  if (senderType === 1) return ROLE_USER;
+  if (senderType === 2) return ROLE_AI;
+
+  if (msg?.is_user === true) return ROLE_USER;
+  if (msg?.from_user_id && !msg?.bot_reply_message_id) return ROLE_USER;
+
+  const role = typeof msg?.role === "string" ? msg.role.toLowerCase() : "";
+  if (role === "user") return ROLE_USER;
+  if (role === "assistant" || role === "bot" || role === "ai") return ROLE_AI;
+
+  if (msg?.bot_reply_message_id || msg?.reply_id) return ROLE_AI;
+
+  // 旧结构里 user_type 语义是 0 = 用户
+  const userType = Number(msg?.user_type);
+  if (Number.isFinite(userType) && userType === 0) return ROLE_USER;
+
+  return ROLE_UNKNOWN;
+}
+
+// 统计一条对话里的角色分布,用来在控制台暴露"全被标成 AI"这类回归
+function countRoles(messages) {
+  const stat = { user: 0, ai: 0, unknown: 0 };
+  for (const msg of messages) {
+    const role = inferRole(msg);
+    if (role === ROLE_USER) stat.user++;
+    else if (role === ROLE_AI) stat.ai++;
+    else stat.unknown++;
+  }
+  return stat;
+}
+
+// 标题清洗:侧边栏是虚拟列表,textContent 常把同一条标题重复拼 2~3 遍;
+// 顺手去掉首尾杂符并截断,避免文件名过长。
+function normalizeTitle(raw, fallback) {
+  let text = String(raw || "").replace(/\s+/g, " ").trim();
+
+  for (let times = 4; times >= 2; times--) {
+    if (text.length >= times * 2 && text.length % times === 0) {
+      const unit = text.slice(0, text.length / times);
+      if (unit.repeat(times) === text) {
+        text = unit;
+        break;
+      }
+    }
+  }
+
+  text = text.replace(/^[\s·\-–—|:：]+/, "").replace(/[\s·\-–—|:：]+$/, "");
+  if (!text) text = String(fallback || "对话");
+  return text.length > 60 ? text.slice(0, 60).trim() : text;
+}
+
 function formatMarkdown({ conv, messages }) {
+  const title = normalizeTitle(conv.title, conv.id);
   const out = [];
-  out.push(`# ${conv.title || conv.id}`, "");
+  out.push(`# ${title}`, "");
   out.push(`- 对话 ID: ${conv.id}`);
   out.push(`- 消息数: ${messages.length}`);
   out.push(`- 导出时间: ${new Date().toISOString()}`);
-  out.push("", "---", "");
 
+  let unknown = 0;
+  const rows = [];
   for (const msg of messages) {
-    const role = Number(msg.user_type) === 0 ? "用户" : "AI";
+    const detected = inferRole(msg);
+    if (detected === ROLE_UNKNOWN) unknown++;
+    const role = detected === ROLE_UNKNOWN ? ROLE_AI : detected;
     const time = msg.create_time
       ? new Date(Number(msg.create_time) * 1000).toLocaleString()
       : "";
     const text = extractText(msg);
     if (!text) continue;
-    out.push(`## ${role}${time ? ` · ${time}` : ""}`, "", text, "", "---", "");
+    rows.push(`## ${role}${time ? ` · ${time}` : ""}`, "", text, "", "---", "");
   }
+
+  if (unknown > 0) {
+    out.push(`- 角色识别: ${unknown} 条未能判定(sender_type / role 均缺失),已按 AI 输出`);
+  }
+  out.push("", "---", "", ...rows);
   return out.join("\n");
 }
 
@@ -269,6 +504,7 @@ async function exportAll() {
 
   let success = 0;
   let failed = 0;
+  let totalUser = 0;
   const errors = [];
 
   for (let i = 0; i < convs.length; i++) {
@@ -276,10 +512,15 @@ async function exportAll() {
     try {
       const result = await exportConversation(conv);
       const markdown = formatMarkdown(result);
-      const filename = `${conv.title || conv.id}`;
+      const filename = normalizeTitle(conv.title, conv.id);
       await requestDownload(filename, markdown);
       success++;
-      log(`[${i + 1}/${convs.length}] ${conv.title || conv.id}: ${result.messages.length} 条 ✓`);
+      const roleStat = countRoles(result.messages);
+      totalUser += roleStat.user;
+      log(
+        `[${i + 1}/${convs.length}] ${filename}: ${result.messages.length} 条 ` +
+          `(用户 ${roleStat.user} / AI ${roleStat.ai} / 未识别 ${roleStat.unknown}) ✓`
+      );
     } catch (err) {
       failed++;
       errors.push(`${conv.title || conv.id}: ${err.message}`);
@@ -290,6 +531,11 @@ async function exportAll() {
 
   log(`导出完成: 成功 ${success}, 失败 ${failed}`);
   if (errors.length) log("失败明细:", errors);
+  if (success > 0 && totalUser === 0) {
+    console.warn(
+      "[豆包导出] 警告:全部导出里没有识别到任何用户消息,角色判定可能已失效(接口字段变了)。"
+    );
+  }
   postProgress({ type: "done", success, failed, errors });
 }
 
