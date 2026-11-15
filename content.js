@@ -443,32 +443,32 @@ const ROLE_AI = "AI";
 const ROLE_UNKNOWN = "?";
 
 // 角色判定。
-// 实测:这条接口返回的消息里没有稳定的 user_type(409 个导出里用户消息全部被误判成 AI),
-// 豆包实际用的是 sender_type:1 = 用户,2 = 助手。按优先级多字段兜底,判不出来就返回 "?"。
-// 注意顺序:用户侧标记必须排在 bot_reply / reply_id 之前,否则回复链字段会把用户消息也吞成 AI。
+// 依据 570 条对话 / 300 条消息样本的实测结论:
+//   - 有效字段只有 user_type:1 = 用户,2 = 助手
+//   - sender_type / role / message_type 全为 undefined
+//   - bot_reply_message_id 在 300/300 条消息上都存在(用户消息也带),没有区分度,
+//     之前把它当"助手标记",导致整篇被判成 AI,现已移除
+//   - reply_id 同理(引用回复),不可用
 function inferRole(msg) {
   const senderType = Number(msg?.sender_type);
   const userType = Number(msg?.user_type);
 
-  // 1. 角色枚举(线上两种字段语义一致:1 = 用户,2/3 = 助手)
+  // 1. 角色枚举(实测:user_type 1 = 用户,2 = 助手)
   if (senderType === 1 || userType === 1) return ROLE_USER;
   if (senderType === 2 || senderType === 3 || userType === 2 || userType === 3) {
     return ROLE_AI;
   }
 
-  // 2. 用户侧标记
+  // 2. 用户侧标记(实测未出现,保留给其他接口版本兜底)
   if (msg?.is_user === true) return ROLE_USER;
-  if (msg?.sender?.user_id || msg?.from_user_id) return ROLE_USER;
+  if (msg?.sender?.user_id) return ROLE_USER;
 
   // 3. 字符串角色
   const role = typeof msg?.role === "string" ? msg.role.toLowerCase() : "";
   if (role === "user") return ROLE_USER;
   if (role === "assistant" || role === "bot" || role === "ai") return ROLE_AI;
 
-  // 4. 助手侧标记:只有 bot_reply 可信,reply_id 用户消息也会带(用它会把整篇判成 AI)
-  if (msg?.bot_reply_message_id) return ROLE_AI;
-
-  // 5. 旧结构:user_type 0 = 用户
+  // 4. 旧结构:user_type 0 = 用户
   if (Number.isFinite(userType) && userType === 0) return ROLE_USER;
 
   return ROLE_UNKNOWN;

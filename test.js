@@ -321,25 +321,30 @@ function testInferRole() {
   assert.strictEqual(inferRole({ sender_type: 1 }), "用户", "sender_type=1 应为用户");
   assert.strictEqual(inferRole({ sender_type: 2 }), "AI", "sender_type=2 应为 AI");
   assert.strictEqual(inferRole({ sender_type: "1" }), "用户", "sender_type 为字符串也应识别");
+  assert.strictEqual(inferRole({ user_type: 1 }), "用户", "user_type=1 应为用户");
+  assert.strictEqual(inferRole({ user_type: 2 }), "AI", "user_type=2 应为 AI");
   assert.strictEqual(inferRole({ role: "user" }), "用户", "role=user 应为用户");
   assert.strictEqual(inferRole({ role: "assistant" }), "AI", "role=assistant 应为 AI");
   assert.strictEqual(inferRole({ user_type: 0 }), "用户", "user_type=0 应为用户");
-  assert.strictEqual(inferRole({ bot_reply_message_id: "x" }), "AI", "有 bot_reply 应为 AI");
   assert.strictEqual(inferRole({}), "?", "无从判断时应返回未知,而不是默认 AI");
 
-  // 真实事故回归:用户消息带 reply_id(引用回复),旧逻辑会把它判成 AI
+  // 真实事故回归 1:用户消息带 reply_id(引用回复),旧逻辑判成 AI
   assert.strictEqual(
     inferRole({ user_type: 1, reply_id: "r1" }),
     "用户",
     "user_type=1 的用户消息不能被 reply_id 抢判成 AI"
   );
+  // 真实事故回归 2:bot_reply_message_id 在 300/300 条消息上都存在,不具备区分度
   assert.strictEqual(
-    inferRole({ sender_type: 1, bot_reply_message_id: "b1" }),
-    "用户",
-    "sender_type=1 优先于 bot_reply_message_id"
+    inferRole({ bot_reply_message_id: "b1" }),
+    "?",
+    "只有 bot_reply_message_id 不足以判定为 AI"
   );
-  assert.strictEqual(inferRole({ sender_type: 3 }), "AI", "sender_type=3 应为 AI");
-  assert.strictEqual(inferRole({ reply_id: "r1" }), "?", "只有 reply_id 不足以判定角色");
+  assert.strictEqual(
+    inferRole({ user_type: 1, bot_reply_message_id: "b1", reply_id: "r1" }),
+    "用户",
+    "user_type 必须优先于回复链字段"
+  );
 
   const dist = summarizeRoleFields([{ sender_type: 1 }, { sender_type: 2 }, { sender_type: 2 }]);
   assert.deepStrictEqual({ ...dist["字段分布"].sender_type }, { "1": 1, "2": 2 }, "字段分布应正确");
