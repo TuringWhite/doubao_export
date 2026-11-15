@@ -1,5 +1,12 @@
 # 豆包对话导出器
 
+[![release](https://img.shields.io/github/v/release/TuringWhite/doubao_export?color=165dff)](https://github.com/TuringWhite/doubao_export/releases)
+[![license](https://img.shields.io/github/license/TuringWhite/doubao_export?color=16a34a)](LICENSE)
+[![stars](https://img.shields.io/github/stars/TuringWhite/doubao_export?color=eab308)](https://github.com/TuringWhite/doubao_export/stargazers)
+[![Chrome](https://img.shields.io/badge/Chrome-111%2B-4285F4?logo=googlechrome&logoColor=white)](https://www.google.com/chrome/)
+
+**简体中文** · [English](README.en.md)
+
 把豆包网页版的历史对话**批量导出成 Markdown** —— 一个 Chrome 扩展（Manifest V3），全程本地处理，不上传任何服务器。
 
 ![界面预览](store/screenshot-1-1280x800.png)
